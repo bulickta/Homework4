@@ -1,0 +1,182 @@
+---
+title: "ST 558 Homework 4"
+author: "Thomas Bulick"
+date: "June 25, 2024"
+format: html
+editor: visual
+execute: 
+  error: TRUE
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(httr)
+library(jsonlite)
+```
+
+## Task 1: Conceptual Questions
+
+1.  What is the purpose of the lapply() function? What is the equivalent purrr function?
+
+> The lapply() function is designed to apply a specific function (usually custom made) to each element in a list of objects, allowing for vectorized-ish processing that is quicker than looping. The equivalent function in purrr would be map().
+
+2.  Suppose we have a list called my_list. Each element of the list is a numeric data frame (all columns are numeric). We want use lapply() to run the code cor(numeric_matrix, method = "kendall") on each element of the list. Write code to do this below! (I’m really trying to ask you how you specify method = "kendall" when calling lapply())
+
+> This would be coded as: lapply(X = my_list, FUN = cor, method="kendall")
+
+3.  What are two advantages of using purrr functions instead of the BaseR apply family?
+
+> Purrr functions provide additional helper functions to make code more compact/readable, and Purrr functions are generally more consistent across the function variations like map(), map2(), etc., compared to lapply(), tapply(), etc.
+
+4.  What is a side-effect function?
+
+> A side-effect function is one that does not output the original data set being input to the function, instead providing some other sort of output such as a plot or a print.
+
+5.  Why can you name a variable sd in a function and not cause any issues with the sd function?
+
+> A variable can be named "sd" within a function because when the function is called it creates a temporary environment that supersedes all other environments, and which is deleted after the function finishes, so any definitions that occur within the function itself do not ultimately affect the other environment levels.
+
+## Task 2: Writing R Functions
+
+First, we define a function that takes two input vectors, one of responses and one of predicted value, an automatically calculates the Root Mean Square Error per the formula in the prompt.
+
+```{r}
+getRMSE <- function(resp,pred,...){
+  diff <- resp-pred
+  diffsq <- diff*diff
+  rmse <- sqrt(mean(diffsq,...))
+  rmse
+}
+```
+
+Next, we simulate some data to use to test our RMSE function, so that we have a response vector, a prediction vector, and a response vector with some artificially missing data.
+
+```{r}
+set.seed(10)
+n <- 100
+x <- runif(n)
+resp <- 3 + 10*x + rnorm(n)
+pred <- predict(lm(resp ~ x), data.frame(x))
+respMiss <- resp 
+respMiss[c(1,2)] <- NA_real_
+```
+
+We then test our function to ensure it returns what we expect: the RMSE for response and prediction, NA when there are missing values and na.rm is not specified, and an RMSE with null values removed with na.rm is specified as true.
+
+```{r}
+getRMSE(resp,pred)
+getRMSE(respMiss,pred)
+getRMSE(respMiss,pred,na.rm=TRUE)
+```
+
+Next, we complete the same process for the Mean Absolute Deviation, defining a function, re-generating sample data, and testing to ensure the MAE is returned for normal response and prediction, NA is returned when there are missing values, and an adjusted MAE is returned when missing values are removed.
+
+```{r}
+getMAE <- function(resp,pred,...){
+  absdiff <- abs(resp-pred)
+  mae <- mean(absdiff,...)
+  mae
+}
+
+set.seed(10)
+n <- 100
+x <- runif(n)
+resp <- 3 + 10*x + rnorm(n)
+pred <- predict(lm(resp ~ x), data.frame(x))
+respMiss <- resp 
+respMiss[c(1,2)] <- NA_real_
+
+getMAE(resp,pred)
+getMAE(respMiss,pred)
+getMAE(respMiss,pred,na.rm=TRUE)
+```
+
+Next, we create a wrapper function that takes arguements for a response vecetor, a prediction vector, a string of the desired function outputs, and allows for the specification of na.rm if needed. Notably, the way I have defined this function requires that, if multiple functions are desired, they be included within one string separated by a space to be parsed correctly. Additionally, the way I wrote this function assumes that the helper functions are named according to "getX" in order to parse the names neatly and correctly in the output.
+
+```{r}
+myWrapper <- function(resp,pred,metric="getRMSE getMAE",...){
+  if(!is.numeric(resp) || !is.vector(resp) || !is.atomic(resp)){
+    stop("Response provided is not a numerical atomic vector")
+  }
+  if(!is.numeric(pred) || !is.vector(pred) || !is.atomic(pred)){
+    stop("Prediction provided is not a numerical atomic vector")
+  }
+  metricVec <- strsplit(metric," ")[[1]]
+  val <- c()
+  for (i in 1:length(metricVec)){
+    val[i] <- get(metricVec[i])(resp,pred,...)
+    names(val)[i] <- substr(metricVec[i],4,nchar(metricVec[i]))
+  }
+  val 
+}
+```
+
+We then generate our simulated data again, and use it to confirm our function is working correctly.
+
+```{r}
+set.seed(10)
+n <- 100
+x <- runif(n)
+resp <- 3 + 10*x + rnorm(n)
+pred <- predict(lm(resp ~ x), data.frame(x))
+respMiss <- resp 
+respMiss[c(1,2)] <- NA_real_
+```
+
+First we confirm that not specifying a helper function works as intended, that specifying each combination of a helper function works as intended. 
+```{r}
+myWrapper(resp,pred)
+myWrapper(resp,pred,"getRMSE")
+myWrapper(resp,pred,"getMAE")
+myWrapper(resp,pred,"getRMSE getMAE")
+```
+
+Next we confirm that all version output "NA" when including missing data without rm.na specified. 
+```{r}
+myWrapper(respMiss,pred)
+myWrapper(respMiss,pred,"getRMSE")
+myWrapper(respMiss,pred,"getMAE")
+myWrapper(respMiss,pred,"getRMSE getMAE")
+```
+
+Next we confirm that all versions provide adjusted results when rm.na is set to true. 
+```{r}
+myWrapper(respMiss,pred,na.rm=TRUE)
+myWrapper(respMiss,pred,"getRMSE",na.rm=TRUE)
+myWrapper(respMiss,pred,"getMAE",na.rm=TRUE)
+myWrapper(respMiss,pred,"getRMSE getMAE",na.rm=TRUE)
+```
+
+Lastly, we test that the correct error messages are thrown when one of the input vectors is not actually an atomic numeric vector.
+```{r}
+myWrapper(iris,pred)
+myWrapper(resp,iris)
+```
+
+## Task 3: Querying an API and a Tidy-Style Function
+
+To query the News API, we first look into the website documentation and determine a few variables we can specify in our URL. For my initial query, I decided to select the subject of "Elon Musk" as I assumed there would be many articles based on the recent Tesla compensation package drama. Additionally, I decided to sort the results by popularity, and I used the API I recieved after registering on the website. We then translate this query into usable parsed data, eventually returning a dataframe with the actual information on each article.
+
+```{r}
+URL <- "https://newsapi.org/v2/everything?q=Elon%20Musk&sortBY=popularity&apiKey=6817506ff35546e58c629710b46cafd1"
+news <- GET(URL)
+parsed <- fromJSON(rawToChar(news$content))
+articleInfo <- as_tibble(parsed$articles)
+articleInfo
+```
+
+Next we develop a function to complete these queries automatically, allowing the user to specific a topic of interest, a publishing date when the search should begin, and adding their own API key. We then complete two test queries, one checking for articles on the Olympics since June 1st, and one checking for articles on Dogs since June 15th.
+
+```{r}
+queryNewsapi <- function(topic,date,key){
+  URL <- paste("https://newsapi.org/v2/everything?q=",topic,"&from=",date,"&apiKey=",key,sep='')
+  news <- GET(URL)
+  parsed <- fromJSON(rawToChar(news$content))
+  articleInfo <- as_tibble(parsed$articles)
+  articleInfo
+}
+
+queryNewsapi("Olympics","2024-06-01","6817506ff35546e58c629710b46cafd1")
+queryNewsapi("Dogs","2024-06-15","6817506ff35546e58c629710b46cafd1")
+
+```
